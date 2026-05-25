@@ -1,0 +1,458 @@
+﻿Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+
+$ErrorActionPreference = "Stop"
+
+$AppName = "桌面软件助手"
+$BaseDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ShortcutsDir = Join-Path $BaseDir "shortcuts"
+$IconPath = Join-Path $BaseDir "assets\app.ico"
+$ShortcutExtensions = @(".lnk", ".url", ".appref-ms")
+
+if (-not (Test-Path -LiteralPath $ShortcutsDir)) {
+    New-Item -ItemType Directory -Path $ShortcutsDir | Out-Null
+}
+
+function Get-DesktopDir {
+    [Environment]::GetFolderPath("Desktop")
+}
+
+function Get-PublicDesktopDir {
+    $public = $env:PUBLIC
+    if ([string]::IsNullOrWhiteSpace($public)) {
+        $public = "C:\Users\Public"
+    }
+    Join-Path $public "Desktop"
+}
+
+function Get-DisplayName($Path) {
+    [System.IO.Path]::GetFileNameWithoutExtension($Path)
+}
+
+function Get-UniqueDestination($TargetDir, $Name) {
+    $candidate = Join-Path $TargetDir $Name
+    if (-not (Test-Path -LiteralPath $candidate)) {
+        return $candidate
+    }
+
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($Name)
+    $suffix = [System.IO.Path]::GetExtension($Name)
+    $index = 2
+    while ($true) {
+        $candidate = Join-Path $TargetDir ("{0} ({1}){2}" -f $stem, $index, $suffix)
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+        $index++
+    }
+}
+
+function Get-ShortcutFiles {
+    Get-ChildItem -LiteralPath $ShortcutsDir -File |
+        Where-Object { $ShortcutExtensions -contains $_.Extension.ToLowerInvariant() } |
+        Sort-Object @{ Expression = { Get-DisplayName $_.FullName } }
+}
+
+function Get-ShortcutTarget($Path) {
+    if ([System.IO.Path]::GetExtension($Path).ToLowerInvariant() -ne ".lnk") {
+        return $Path
+    }
+
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($Path)
+        if (-not [string]::IsNullOrWhiteSpace($shortcut.TargetPath)) {
+            return $shortcut.TargetPath
+        }
+    } catch {
+        return $Path
+    }
+    $Path
+}
+
+function Get-AppIconSource($Path) {
+    try {
+        $target = Get-ShortcutTarget $Path
+        if (-not (Test-Path -LiteralPath $target)) {
+            $target = $Path
+        }
+        $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($target)
+        if ($null -eq $icon) {
+            return $null
+        }
+        $bitmap = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon(
+            $icon.Handle,
+            [System.Windows.Int32Rect]::Empty,
+            [System.Windows.Media.Imaging.BitmapSizeOptions]::FromWidthAndHeight(40, 40)
+        )
+        $bitmap.Freeze()
+        return $bitmap
+    } catch {
+        return $null
+    }
+}
+
+function Show-Info($Message) {
+    [System.Windows.MessageBox]::Show($Window, $Message, $AppName, "OK", "Information") | Out-Null
+}
+
+function Show-Error($Message) {
+    [System.Windows.MessageBox]::Show($Window, $Message, $AppName, "OK", "Error") | Out-Null
+}
+
+function Open-Shortcut($Path) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Show-Error "这个快捷方式已经不存在。"
+        Refresh-Grid
+        return
+    }
+
+    try {
+        Start-Process -FilePath $Path
+    } catch {
+        Show-Error "无法打开：$(Get-DisplayName $Path)`n$($_.Exception.Message)"
+    }
+}
+
+function Restore-Shortcut($Path) {
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            $destination = Get-UniqueDestination (Get-DesktopDir) ([System.IO.Path]::GetFileName($Path))
+            Move-Item -LiteralPath $Path -Destination $destination
+        }
+        Refresh-Grid
+    } catch {
+        Show-Error "无法还原：$([System.IO.Path]::GetFileName($Path))`n$($_.Exception.Message)"
+    }
+}
+
+function New-AppCard($File) {
+    $name = Get-DisplayName $File.FullName
+    $path = $File.FullName
+
+    $border = New-Object System.Windows.Controls.Border
+    $border.Width = 68
+    $border.Height = 68
+    $border.Margin = New-Object System.Windows.Thickness(7)
+    $border.CornerRadius = New-Object System.Windows.CornerRadius(16)
+    $border.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(135, 31, 41, 55))
+    $border.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(85, 148, 163, 184))
+    $border.BorderThickness = New-Object System.Windows.Thickness(1)
+    $border.ToolTip = $name
+
+    $iconHost = New-Object System.Windows.Controls.Grid
+    $iconHost.Margin = New-Object System.Windows.Thickness(8)
+    $border.Child = $iconHost
+
+    $iconSource = Get-AppIconSource $path
+    if ($null -ne $iconSource) {
+        $image = New-Object System.Windows.Controls.Image
+        $image.Width = 42
+        $image.Height = 42
+        $image.Source = $iconSource
+        $image.Stretch = "Uniform"
+        $image.HorizontalAlignment = "Center"
+        $image.VerticalAlignment = "Center"
+        $iconHost.Children.Add($image) | Out-Null
+    } else {
+        $fallback = New-Object System.Windows.Controls.TextBlock
+        $fallback.Text = $name.Substring(0, 1).ToUpperInvariant()
+        $fallback.FontSize = 24
+        $fallback.FontWeight = "Bold"
+        $fallback.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(187, 247, 208))
+        $fallback.HorizontalAlignment = "Center"
+        $fallback.VerticalAlignment = "Center"
+        $iconHost.Children.Add($fallback) | Out-Null
+    }
+
+    $menu = New-Object System.Windows.Controls.ContextMenu
+    $openItem = New-Object System.Windows.Controls.MenuItem
+    $openItem.Header = "打开"
+    $openItem.Tag = $path
+    $openItem.Add_Click({
+        param($sender, $eventArgs)
+        Open-Shortcut $sender.Tag
+    })
+    $menu.Items.Add($openItem) | Out-Null
+
+    $restoreItem = New-Object System.Windows.Controls.MenuItem
+    $restoreItem.Header = "还原到桌面"
+    $restoreItem.Tag = $path
+    $restoreItem.Add_Click({
+        param($sender, $eventArgs)
+        Restore-Shortcut $sender.Tag
+    })
+    $menu.Items.Add($restoreItem) | Out-Null
+
+    $border.Tag = $path
+    $border.ContextMenu = $menu
+    $border.Cursor = [System.Windows.Input.Cursors]::Hand
+    $border.Add_MouseLeftButtonUp({
+        param($sender, $eventArgs)
+        Open-Shortcut $sender.Tag
+    })
+    $border.Add_MouseEnter({
+        param($sender, $eventArgs)
+        $sender.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(210, 34, 197, 94))
+        $sender.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(134, 239, 172))
+    })
+    $border.Add_MouseLeave({
+        param($sender, $eventArgs)
+        $sender.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(135, 31, 41, 55))
+        $sender.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(85, 148, 163, 184))
+    })
+
+    $border
+}
+
+$Xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="桌面软件助手" Width="52" Height="52"
+        WindowStartupLocation="Manual" Topmost="True" Background="Transparent"
+        AllowsTransparency="True" WindowStyle="None" ResizeMode="NoResize"
+        ShowInTaskbar="False" FontFamily="Microsoft YaHei UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Foreground" Value="#1F2937"/>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Border x:Name="TriggerIcon" Width="52" Height="52" CornerRadius="14"
+                Background="#18B957" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                BorderBrush="#FFFFFF" BorderThickness="2" ToolTip="移入打开桌面软件助手">
+            <Grid>
+                <TextBlock Text="助" Foreground="White" FontSize="24" FontWeight="Bold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Border x:Name="MainShell" Visibility="Collapsed" Background="#D9111827"
+                CornerRadius="14" BorderBrush="#665E6B7E" BorderThickness="1">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="88"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="32"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="#B9147A43" CornerRadius="14,14,0,0">
+                    <Grid Margin="18,0">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="桌面软件助手" Foreground="White" FontSize="22" FontWeight="Bold"/>
+                            <TextBlock Text="收纳桌面快捷方式，像软件助手一样快速启动" Foreground="#DBFBE7" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="CloseButton" Content="收起" Width="58" Height="30"
+                                    Margin="0,0,8,0" Background="#8022C55E" Foreground="White"/>
+                            <Button x:Name="ExitButton" Content="退出" Width="58" Height="30"
+                                    Background="#80374151" Foreground="White"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1" Background="Transparent" Padding="14,12,14,10">
+                    <StackPanel>
+                        <Border Background="#D91F2937" CornerRadius="9" BorderBrush="#665E6B7E" BorderThickness="1" Padding="10,5">
+                            <TextBox x:Name="SearchBox" BorderThickness="0" FontSize="14"
+                                     Background="Transparent" Foreground="#F9FAFB" CaretBrush="#22C55E"
+                                     VerticalContentAlignment="Center"/>
+                        </Border>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="86"/>
+                                <ColumnDefinition Width="86"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="CollectButton" Grid.Column="0" Content="一键收纳桌面"
+                                    Height="34" Margin="0,0,8,0" Background="#18B957" Foreground="White"/>
+                            <Button x:Name="RefreshButton" Grid.Column="1" Content="刷新"
+                                    Height="34" Margin="0,0,8,0" Background="#CC1F2937" Foreground="#F9FAFB"/>
+                            <Button x:Name="RestoreAllButton" Grid.Column="2" Content="全部恢复"
+                                    Height="34" Background="#CC1F2937" Foreground="#F9FAFB"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2" Margin="14,0,14,0" Background="#99111827" CornerRadius="12"
+                        BorderBrush="#665E6B7E" BorderThickness="1">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <WrapPanel x:Name="GridPanel" Margin="8"/>
+                    </ScrollViewer>
+                </Border>
+
+                <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="16,0" VerticalAlignment="Center"
+                           Foreground="#CBD5E1" FontSize="12"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
+"@
+
+$reader = New-Object System.Xml.XmlNodeReader ([xml]$Xaml)
+$Window = [Windows.Markup.XamlReader]::Load($reader)
+if (Test-Path -LiteralPath $IconPath) {
+    $iconUri = New-Object System.Uri($IconPath)
+    $Window.Icon = New-Object System.Windows.Media.Imaging.BitmapImage($iconUri)
+}
+
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$Window.Left = 10
+$Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
+
+$TriggerIcon = $Window.FindName("TriggerIcon")
+$MainShell = $Window.FindName("MainShell")
+$SearchBox = $Window.FindName("SearchBox")
+$CollectButton = $Window.FindName("CollectButton")
+$RefreshButton = $Window.FindName("RefreshButton")
+$RestoreAllButton = $Window.FindName("RestoreAllButton")
+$CloseButton = $Window.FindName("CloseButton")
+$ExitButton = $Window.FindName("ExitButton")
+$GridPanel = $Window.FindName("GridPanel")
+$StatusLabel = $Window.FindName("StatusLabel")
+
+function Set-CollapsedPosition {
+    $Window.Width = 52
+    $Window.Height = 52
+    $Window.Left = 10
+    $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
+    $MainShell.Visibility = "Collapsed"
+    $TriggerIcon.Visibility = "Visible"
+}
+
+function Set-ExpandedPosition {
+    $Window.Width = 390
+    $Window.Height = 560
+    $Window.Left = 10
+    $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
+    $TriggerIcon.Visibility = "Collapsed"
+    $MainShell.Visibility = "Visible"
+    Refresh-Grid
+    $Window.Activate() | Out-Null
+}
+
+function Refresh-Grid {
+    $GridPanel.Children.Clear()
+    $query = $SearchBox.Text.Trim().ToLowerInvariant()
+    $files = @(Get-ShortcutFiles | Where-Object { (Get-DisplayName $_.FullName).ToLowerInvariant().Contains($query) })
+
+    if ($files.Count -eq 0) {
+        $empty = New-Object System.Windows.Controls.StackPanel
+        $empty.Width = 330
+        $empty.Height = 250
+        $empty.HorizontalAlignment = "Center"
+        $empty.VerticalAlignment = "Center"
+
+        $title = New-Object System.Windows.Controls.TextBlock
+        $title.Text = "这里还没有快捷方式"
+        $title.FontSize = 18
+        $title.FontWeight = "Bold"
+        $title.TextAlignment = "Center"
+        $title.Margin = New-Object System.Windows.Thickness(0, 76, 0, 8)
+        $title.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(31, 41, 55))
+        $empty.Children.Add($title) | Out-Null
+
+        $hint = New-Object System.Windows.Controls.TextBlock
+        $hint.Text = "点击一键收纳桌面，把快捷方式整理到这里。"
+        $hint.TextAlignment = "Center"
+        $hint.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(107, 114, 128))
+        $empty.Children.Add($hint) | Out-Null
+
+        $GridPanel.Children.Add($empty) | Out-Null
+    } else {
+        foreach ($file in $files) {
+            $GridPanel.Children.Add((New-AppCard $file)) | Out-Null
+        }
+    }
+
+    $total = @(Get-ShortcutFiles).Count
+    $StatusLabel.Text = "已收纳 $total 个快捷方式"
+}
+
+$CollectButton.Add_Click({
+    $moved = 0
+    foreach ($sourceDir in @((Get-DesktopDir), (Get-PublicDesktopDir))) {
+        if (-not (Test-Path -LiteralPath $sourceDir)) {
+            continue
+        }
+
+        foreach ($item in Get-ChildItem -LiteralPath $sourceDir -File) {
+            if ($item.Name.ToLowerInvariant() -eq "desktop.ini") {
+                continue
+            }
+            if ($ShortcutExtensions -contains $item.Extension.ToLowerInvariant()) {
+                try {
+                    $destination = Get-UniqueDestination $ShortcutsDir $item.Name
+                    Move-Item -LiteralPath $item.FullName -Destination $destination
+                    $moved++
+                } catch {
+                    Show-Error "无法移动：$($item.Name)`n$($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    Refresh-Grid
+    if ($moved -eq 0) {
+        Show-Info "桌面上没有发现新的快捷方式。"
+    } else {
+        Show-Info "已收纳 $moved 个桌面快捷方式。"
+    }
+})
+
+$RefreshButton.Add_Click({ Refresh-Grid })
+$SearchBox.Add_TextChanged({ Refresh-Grid })
+$TriggerIcon.Add_MouseEnter({ Set-ExpandedPosition })
+$Window.Add_Deactivated({
+    if ($MainShell.Visibility -eq "Visible") {
+        Set-CollapsedPosition
+    }
+})
+$CloseButton.Add_Click({ Set-CollapsedPosition })
+$ExitButton.Add_Click({ $Window.Close() })
+
+$RestoreAllButton.Add_Click({
+    $files = @(Get-ShortcutFiles)
+    if ($files.Count -eq 0) {
+        Show-Info "没有需要恢复的快捷方式。"
+        return
+    }
+
+    $answer = [System.Windows.MessageBox]::Show($Window, "确定把 $($files.Count) 个快捷方式恢复到桌面吗？", $AppName, "YesNo", "Question")
+    if ($answer -ne [System.Windows.MessageBoxResult]::Yes) {
+        return
+    }
+
+    $restored = 0
+    foreach ($file in $files) {
+        try {
+            $destination = Get-UniqueDestination (Get-DesktopDir) $file.Name
+            Move-Item -LiteralPath $file.FullName -Destination $destination
+            $restored++
+        } catch {
+            Show-Error "无法还原：$($file.Name)`n$($_.Exception.Message)"
+        }
+    }
+
+    Refresh-Grid
+    Show-Info "已恢复 $restored 个快捷方式。"
+})
+
+$Window.Add_ContentRendered({
+    Refresh-Grid
+    Set-CollapsedPosition
+})
+$Window.ShowDialog() | Out-Null
+
+
+
+
+

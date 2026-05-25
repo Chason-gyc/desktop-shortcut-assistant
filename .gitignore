@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+assets/app-*.png
+*.log
+.vscode/
+.idea/
