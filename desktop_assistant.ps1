@@ -290,13 +290,23 @@ $Xaml = @"
 
                 <Border Grid.Row="2" Margin="10,0,10,0" Background="#66111827" CornerRadius="12"
                         BorderBrush="#4D5E6B7E" BorderThickness="1">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <WrapPanel x:Name="GridPanel" Margin="6"/>
-                    </ScrollViewer>
+                    <WrapPanel x:Name="GridPanel" Margin="6" VerticalAlignment="Top"/>
                 </Border>
 
-                <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="12,0" VerticalAlignment="Center"
-                           Foreground="#CBD5E1" FontSize="12"/>
+                <Grid Grid.Row="3" Margin="12,0">
+                    <TextBlock x:Name="StatusLabel" VerticalAlignment="Center"
+                               Foreground="#CBD5E1" FontSize="12"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button x:Name="PrevPageButton" Content="‹" ToolTip="上一页" Width="24" Height="22"
+                                Margin="0,0,5,0" Padding="0" FontSize="15" FontWeight="Bold"
+                                Background="#991F2937" Foreground="#F9FAFB"/>
+                        <TextBlock x:Name="PageLabel" Width="44" TextAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#CBD5E1" FontSize="12"/>
+                        <Button x:Name="NextPageButton" Content="›" ToolTip="下一页" Width="24" Height="22"
+                                Margin="5,0,0,0" Padding="0" FontSize="15" FontWeight="Bold"
+                                Background="#991F2937" Foreground="#F9FAFB"/>
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Border>
     </Grid>
@@ -324,6 +334,11 @@ $CloseButton = $Window.FindName("CloseButton")
 $ExitButton = $Window.FindName("ExitButton")
 $GridPanel = $Window.FindName("GridPanel")
 $StatusLabel = $Window.FindName("StatusLabel")
+$PrevPageButton = $Window.FindName("PrevPageButton")
+$NextPageButton = $Window.FindName("NextPageButton")
+$PageLabel = $Window.FindName("PageLabel")
+$script:CurrentPage = 0
+$script:ItemsPerPage = 12
 
 function Set-CollapsedPosition {
     $Window.Width = 12
@@ -345,10 +360,42 @@ function Set-ExpandedPosition {
     $Window.Activate() | Out-Null
 }
 
+function Set-PageState($FilteredCount, $TotalCount) {
+    $pageCount = [Math]::Max(1, [Math]::Ceiling($FilteredCount / $script:ItemsPerPage))
+    if ($script:CurrentPage -ge $pageCount) {
+        $script:CurrentPage = $pageCount - 1
+    }
+    if ($script:CurrentPage -lt 0) {
+        $script:CurrentPage = 0
+    }
+
+    $PrevPageButton.IsEnabled = ($script:CurrentPage -gt 0)
+    $NextPageButton.IsEnabled = ($script:CurrentPage -lt ($pageCount - 1))
+    $PageLabel.Text = "$($script:CurrentPage + 1)/$pageCount"
+
+    if ($FilteredCount -eq 0 -or $pageCount -le 1) {
+        $PrevPageButton.Visibility = "Collapsed"
+        $NextPageButton.Visibility = "Collapsed"
+        $PageLabel.Visibility = "Collapsed"
+    } else {
+        $PrevPageButton.Visibility = "Visible"
+        $NextPageButton.Visibility = "Visible"
+        $PageLabel.Visibility = "Visible"
+    }
+
+    if ($SearchBox.Text.Trim().Length -gt 0) {
+        $StatusLabel.Text = "已收纳 $TotalCount 个，匹配 $FilteredCount 个"
+    } else {
+        $StatusLabel.Text = "已收纳 $TotalCount 个快捷方式"
+    }
+}
+
 function Refresh-Grid {
     $GridPanel.Children.Clear()
     $query = $SearchBox.Text.Trim().ToLowerInvariant()
     $files = @(Get-ShortcutFiles | Where-Object { (Get-DisplayName $_.FullName).ToLowerInvariant().Contains($query) })
+    $total = @(Get-ShortcutFiles).Count
+    Set-PageState $files.Count $total
 
     if ($files.Count -eq 0) {
         $empty = New-Object System.Windows.Controls.StackPanel
@@ -374,13 +421,11 @@ function Refresh-Grid {
 
         $GridPanel.Children.Add($empty) | Out-Null
     } else {
-        foreach ($file in $files) {
+        $pageFiles = @($files | Select-Object -Skip ($script:CurrentPage * $script:ItemsPerPage) -First $script:ItemsPerPage)
+        foreach ($file in $pageFiles) {
             $GridPanel.Children.Add((New-AppCard $file)) | Out-Null
         }
     }
-
-    $total = @(Get-ShortcutFiles).Count
-    $StatusLabel.Text = "已收纳 $total 个快捷方式"
 }
 
 $CollectButton.Add_Click({
@@ -415,7 +460,20 @@ $CollectButton.Add_Click({
 })
 
 $RefreshButton.Add_Click({ Refresh-Grid })
-$SearchBox.Add_TextChanged({ Refresh-Grid })
+$SearchBox.Add_TextChanged({
+    $script:CurrentPage = 0
+    Refresh-Grid
+})
+$PrevPageButton.Add_Click({
+    if ($script:CurrentPage -gt 0) {
+        $script:CurrentPage--
+        Refresh-Grid
+    }
+})
+$NextPageButton.Add_Click({
+    $script:CurrentPage++
+    Refresh-Grid
+})
 $TriggerIcon.Add_MouseEnter({ Set-ExpandedPosition })
 $Window.Add_Deactivated({
     if ($MainShell.Visibility -eq "Visible") {
