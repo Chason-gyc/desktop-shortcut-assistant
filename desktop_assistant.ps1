@@ -134,24 +134,24 @@ function New-AppCard($File) {
     $path = $File.FullName
 
     $border = New-Object System.Windows.Controls.Border
-    $border.Width = 68
-    $border.Height = 68
-    $border.Margin = New-Object System.Windows.Thickness(7)
-    $border.CornerRadius = New-Object System.Windows.CornerRadius(16)
-    $border.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(135, 31, 41, 55))
-    $border.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(85, 148, 163, 184))
+    $border.Width = 56
+    $border.Height = 56
+    $border.Margin = New-Object System.Windows.Thickness(6)
+    $border.CornerRadius = New-Object System.Windows.CornerRadius(14)
+    $border.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(95, 31, 41, 55))
+    $border.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(60, 148, 163, 184))
     $border.BorderThickness = New-Object System.Windows.Thickness(1)
     $border.ToolTip = $name
 
     $iconHost = New-Object System.Windows.Controls.Grid
-    $iconHost.Margin = New-Object System.Windows.Thickness(8)
+    $iconHost.Margin = New-Object System.Windows.Thickness(7)
     $border.Child = $iconHost
 
     $iconSource = Get-AppIconSource $path
     if ($null -ne $iconSource) {
         $image = New-Object System.Windows.Controls.Image
-        $image.Width = 42
-        $image.Height = 42
+        $image.Width = 34
+        $image.Height = 34
         $image.Source = $iconSource
         $image.Stretch = "Uniform"
         $image.HorizontalAlignment = "Center"
@@ -160,7 +160,7 @@ function New-AppCard($File) {
     } else {
         $fallback = New-Object System.Windows.Controls.TextBlock
         $fallback.Text = $name.Substring(0, 1).ToUpperInvariant()
-        $fallback.FontSize = 24
+        $fallback.FontSize = 20
         $fallback.FontWeight = "Bold"
         $fallback.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(187, 247, 208))
         $fallback.HorizontalAlignment = "Center"
@@ -196,13 +196,13 @@ function New-AppCard($File) {
     })
     $border.Add_MouseEnter({
         param($sender, $eventArgs)
-        $sender.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(210, 34, 197, 94))
+        $sender.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(170, 34, 197, 94))
         $sender.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(134, 239, 172))
     })
     $border.Add_MouseLeave({
         param($sender, $eventArgs)
-        $sender.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(135, 31, 41, 55))
-        $sender.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(85, 148, 163, 184))
+        $sender.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(95, 31, 41, 55))
+        $sender.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(60, 148, 163, 184))
     })
 
     $border
@@ -211,7 +211,7 @@ function New-AppCard($File) {
 $Xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="桌面软件助手" Width="52" Height="52"
+        Title="桌面软件助手" Width="12" Height="68"
         WindowStartupLocation="Manual" Topmost="True" Background="Transparent"
         AllowsTransparency="True" WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False" FontFamily="Microsoft YaHei UI" FontSize="13">
@@ -225,71 +225,77 @@ $Xaml = @"
         </Style>
     </Window.Resources>
     <Grid>
-        <Border x:Name="TriggerIcon" Width="52" Height="52" CornerRadius="14"
-                Background="#18B957" HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                BorderBrush="#FFFFFF" BorderThickness="2" ToolTip="移入打开桌面软件助手">
+        <Border x:Name="TriggerIcon" Width="12" Height="68" CornerRadius="0,10,10,0"
+                Background="#9918B957" HorizontalAlignment="Left" VerticalAlignment="Center"
+                BorderBrush="#6622C55E" BorderThickness="0,1,1,1" ToolTip="移入打开桌面软件助手">
             <Grid>
-                <TextBlock Text="助" Foreground="White" FontSize="24" FontWeight="Bold"
+                <TextBlock Text="⋮" Foreground="#E8FFF0" FontSize="18" FontWeight="Bold"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Grid>
         </Border>
 
-        <Border x:Name="MainShell" Visibility="Collapsed" Background="#D9111827"
-                CornerRadius="14" BorderBrush="#665E6B7E" BorderThickness="1">
+        <Border x:Name="MainShell" Visibility="Collapsed" Background="#B3111827"
+                CornerRadius="14" BorderBrush="#4D5E6B7E" BorderThickness="1">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="88"/>
+                    <RowDefinition Height="44"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="32"/>
                 </Grid.RowDefinitions>
 
-                <Border Grid.Row="0" Background="#B9147A43" CornerRadius="14,14,0,0">
-                    <Grid Margin="18,0">
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="桌面软件助手" Foreground="White" FontSize="22" FontWeight="Bold"/>
-                            <TextBlock Text="收纳桌面快捷方式，像软件助手一样快速启动" Foreground="#DBFBE7" Margin="0,5,0,0"/>
+                <Border Grid.Row="0" Background="#99147A43" CornerRadius="14,14,0,0">
+                    <Grid Margin="10,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border Width="24" Height="24" CornerRadius="7" Background="#8022C55E" Margin="0,0,7,0">
+                                <TextBlock Text="▦" Foreground="White" FontSize="15" FontWeight="Bold"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Text="桌面软件助手" Foreground="White" FontSize="15" FontWeight="Bold"
+                                       VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button x:Name="CloseButton" Content="收起" Width="58" Height="30"
-                                    Margin="0,0,8,0" Background="#8022C55E" Foreground="White"/>
-                            <Button x:Name="ExitButton" Content="退出" Width="58" Height="30"
+                            <Button x:Name="CloseButton" Content="‹" ToolTip="收起" Width="28" Height="24"
+                                    Margin="0,0,6,0" Padding="0" FontSize="18" FontWeight="Bold"
+                                    Background="#8022C55E" Foreground="White"/>
+                            <Button x:Name="ExitButton" Content="×" ToolTip="退出" Width="28" Height="24"
+                                    Padding="0" FontSize="16" FontWeight="Bold"
                                     Background="#80374151" Foreground="White"/>
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="1" Background="Transparent" Padding="14,12,14,10">
+                <Border Grid.Row="1" Background="Transparent" Padding="10,8,10,7">
                     <StackPanel>
-                        <Border Background="#D91F2937" CornerRadius="9" BorderBrush="#665E6B7E" BorderThickness="1" Padding="10,5">
+                        <Border Background="#B31F2937" CornerRadius="9" BorderBrush="#4D5E6B7E" BorderThickness="1" Padding="9,4">
                             <TextBox x:Name="SearchBox" BorderThickness="0" FontSize="14"
                                      Background="Transparent" Foreground="#F9FAFB" CaretBrush="#22C55E"
                                      VerticalContentAlignment="Center"/>
                         </Border>
-                        <Grid Margin="0,10,0,0">
+                        <Grid Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="86"/>
-                                <ColumnDefinition Width="86"/>
+                                <ColumnDefinition Width="42"/>
+                                <ColumnDefinition Width="42"/>
                             </Grid.ColumnDefinitions>
-                            <Button x:Name="CollectButton" Grid.Column="0" Content="一键收纳桌面"
-                                    Height="34" Margin="0,0,8,0" Background="#18B957" Foreground="White"/>
-                            <Button x:Name="RefreshButton" Grid.Column="1" Content="刷新"
-                                    Height="34" Margin="0,0,8,0" Background="#CC1F2937" Foreground="#F9FAFB"/>
-                            <Button x:Name="RestoreAllButton" Grid.Column="2" Content="全部恢复"
-                                    Height="34" Background="#CC1F2937" Foreground="#F9FAFB"/>
+                            <Button x:Name="CollectButton" Grid.Column="0" Content="⬇" ToolTip="收纳桌面快捷方式"
+                                    Height="28" Margin="0,0,7,0" FontSize="15" Background="#18B957" Foreground="White"/>
+                            <Button x:Name="RefreshButton" Grid.Column="1" Content="↻" ToolTip="刷新"
+                                    Width="36" Height="28" Margin="0,0,6,0" FontSize="16" Background="#991F2937" Foreground="#F9FAFB"/>
+                            <Button x:Name="RestoreAllButton" Grid.Column="2" Content="↥" ToolTip="全部恢复到桌面"
+                                    Width="36" Height="28" FontSize="16" Background="#991F2937" Foreground="#F9FAFB"/>
                         </Grid>
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Row="2" Margin="14,0,14,0" Background="#99111827" CornerRadius="12"
-                        BorderBrush="#665E6B7E" BorderThickness="1">
+                <Border Grid.Row="2" Margin="10,0,10,0" Background="#66111827" CornerRadius="12"
+                        BorderBrush="#4D5E6B7E" BorderThickness="1">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <WrapPanel x:Name="GridPanel" Margin="8"/>
+                        <WrapPanel x:Name="GridPanel" Margin="6"/>
                     </ScrollViewer>
                 </Border>
 
-                <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="16,0" VerticalAlignment="Center"
+                <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="12,0" VerticalAlignment="Center"
                            Foreground="#CBD5E1" FontSize="12"/>
             </Grid>
         </Border>
@@ -320,18 +326,18 @@ $GridPanel = $Window.FindName("GridPanel")
 $StatusLabel = $Window.FindName("StatusLabel")
 
 function Set-CollapsedPosition {
-    $Window.Width = 52
-    $Window.Height = 52
-    $Window.Left = 10
-    $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
+    $Window.Width = 12
+    $Window.Height = 68
+    $Window.Left = 0
+    $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 70)
     $MainShell.Visibility = "Collapsed"
     $TriggerIcon.Visibility = "Visible"
 }
 
 function Set-ExpandedPosition {
-    $Window.Width = 390
-    $Window.Height = 560
-    $Window.Left = 10
+    $Window.Width = 340
+    $Window.Height = 370
+    $Window.Left = 8
     $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
     $TriggerIcon.Visibility = "Collapsed"
     $MainShell.Visibility = "Visible"
@@ -346,24 +352,24 @@ function Refresh-Grid {
 
     if ($files.Count -eq 0) {
         $empty = New-Object System.Windows.Controls.StackPanel
-        $empty.Width = 330
-        $empty.Height = 250
+        $empty.Width = 280
+        $empty.Height = 150
         $empty.HorizontalAlignment = "Center"
         $empty.VerticalAlignment = "Center"
 
         $title = New-Object System.Windows.Controls.TextBlock
         $title.Text = "这里还没有快捷方式"
-        $title.FontSize = 18
+        $title.FontSize = 16
         $title.FontWeight = "Bold"
         $title.TextAlignment = "Center"
-        $title.Margin = New-Object System.Windows.Thickness(0, 76, 0, 8)
-        $title.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(31, 41, 55))
+        $title.Margin = New-Object System.Windows.Thickness(0, 36, 0, 8)
+        $title.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(243, 244, 246))
         $empty.Children.Add($title) | Out-Null
 
         $hint = New-Object System.Windows.Controls.TextBlock
         $hint.Text = "点击一键收纳桌面，把快捷方式整理到这里。"
         $hint.TextAlignment = "Center"
-        $hint.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(107, 114, 128))
+        $hint.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(203, 213, 225))
         $empty.Children.Add($hint) | Out-Null
 
         $GridPanel.Children.Add($empty) | Out-Null
@@ -402,9 +408,9 @@ $CollectButton.Add_Click({
 
     Refresh-Grid
     if ($moved -eq 0) {
-        Show-Info "桌面上没有发现新的快捷方式。"
+        $StatusLabel.Text = "桌面上没有新的快捷方式"
     } else {
-        Show-Info "已收纳 $moved 个桌面快捷方式。"
+        $StatusLabel.Text = "已收纳 $moved 个桌面快捷方式"
     }
 })
 
@@ -422,12 +428,7 @@ $ExitButton.Add_Click({ $Window.Close() })
 $RestoreAllButton.Add_Click({
     $files = @(Get-ShortcutFiles)
     if ($files.Count -eq 0) {
-        Show-Info "没有需要恢复的快捷方式。"
-        return
-    }
-
-    $answer = [System.Windows.MessageBox]::Show($Window, "确定把 $($files.Count) 个快捷方式恢复到桌面吗？", $AppName, "YesNo", "Question")
-    if ($answer -ne [System.Windows.MessageBoxResult]::Yes) {
+        $StatusLabel.Text = "没有需要恢复的快捷方式"
         return
     }
 
@@ -443,7 +444,7 @@ $RestoreAllButton.Add_Click({
     }
 
     Refresh-Grid
-    Show-Info "已恢复 $restored 个快捷方式。"
+    $StatusLabel.Text = "已恢复 $restored 个快捷方式到桌面"
 })
 
 $Window.Add_ContentRendered({
@@ -451,6 +452,7 @@ $Window.Add_ContentRendered({
     Set-CollapsedPosition
 })
 $Window.ShowDialog() | Out-Null
+
 
 
 
