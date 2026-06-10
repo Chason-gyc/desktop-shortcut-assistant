@@ -129,6 +129,146 @@ function Restore-Shortcut($Path) {
     }
 }
 
+function Get-DesktopShortcutCandidates {
+    $candidates = New-Object System.Collections.ArrayList
+    foreach ($sourceDir in @((Get-DesktopDir), (Get-PublicDesktopDir))) {
+        if (-not (Test-Path -LiteralPath $sourceDir)) {
+            continue
+        }
+
+        foreach ($item in Get-ChildItem -LiteralPath $sourceDir -File) {
+            if ($item.Name.ToLowerInvariant() -eq "desktop.ini") {
+                continue
+            }
+            if ($ShortcutExtensions -contains $item.Extension.ToLowerInvariant()) {
+                $candidates.Add($item) | Out-Null
+            }
+        }
+    }
+
+    @($candidates | Sort-Object @{ Expression = { Get-DisplayName $_.FullName } })
+}
+
+function Show-CollectSelectionDialog($Candidates) {
+    $DialogXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="选择要收纳的快捷方式" Width="420" Height="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="#111827" FontFamily="Microsoft YaHei UI" FontSize="13">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="选择要收纳的桌面快捷方式" Foreground="#F9FAFB"
+                   FontSize="17" FontWeight="Bold" Margin="0,0,0,6"/>
+        <CheckBox x:Name="SelectAllCheckBox" Grid.Row="1" Content="全选"
+                  IsChecked="True" IsThreeState="True" Foreground="#D1D5DB" Margin="0,4,0,10"/>
+
+        <Border Grid.Row="2" Background="#1F2937" CornerRadius="8"
+                BorderBrush="#374151" BorderThickness="1">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10">
+                <StackPanel x:Name="ShortcutList"/>
+            </ScrollViewer>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,14,0,0">
+            <TextBlock x:Name="CountLabel" Foreground="#CBD5E1" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="取消" Width="74" Height="30"
+                        Margin="0,0,8,0" Background="#374151" Foreground="#F9FAFB"/>
+                <Button x:Name="OkButton" Content="收纳" Width="74" Height="30"
+                        Background="#18B957" Foreground="White"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
+"@
+
+    $dialogReader = New-Object System.Xml.XmlNodeReader ([xml]$DialogXaml)
+    $dialog = [Windows.Markup.XamlReader]::Load($dialogReader)
+    $dialog.Owner = $Window
+    if (Test-Path -LiteralPath $IconPath) {
+        $dialog.Icon = New-Object System.Windows.Media.Imaging.BitmapImage((New-Object System.Uri($IconPath)))
+    }
+
+    $selectAllCheckBox = $dialog.FindName("SelectAllCheckBox")
+    $shortcutList = $dialog.FindName("ShortcutList")
+    $countLabel = $dialog.FindName("CountLabel")
+    $okButton = $dialog.FindName("OkButton")
+    $cancelButton = $dialog.FindName("CancelButton")
+    $checkBoxes = New-Object System.Collections.ArrayList
+
+    $updateCount = {
+        $selected = @($checkBoxes | Where-Object { $_.IsChecked -eq $true }).Count
+        $countLabel.Text = "已选择 $selected / $($checkBoxes.Count) 个"
+        $okButton.IsEnabled = ($selected -gt 0)
+
+        if ($selected -eq 0) {
+            $selectAllCheckBox.IsChecked = $false
+        } elseif ($selected -eq $checkBoxes.Count) {
+            $selectAllCheckBox.IsChecked = $true
+        } else {
+            $selectAllCheckBox.IsChecked = $null
+        }
+    }
+
+    foreach ($candidate in $Candidates) {
+        $checkBox = New-Object System.Windows.Controls.CheckBox
+        $checkBox.Content = Get-DisplayName $candidate.FullName
+        $checkBox.ToolTip = $candidate.FullName
+        $checkBox.Tag = $candidate
+        $checkBox.IsChecked = $true
+        $checkBox.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(243, 244, 246))
+        $checkBox.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
+        $checkBox.Add_Checked($updateCount)
+        $checkBox.Add_Unchecked($updateCount)
+        $checkBoxes.Add($checkBox) | Out-Null
+        $shortcutList.Children.Add($checkBox) | Out-Null
+    }
+
+    $selectAllCheckBox.Add_Checked({
+        foreach ($checkBox in $checkBoxes) {
+            $checkBox.IsChecked = $true
+        }
+    })
+    $selectAllCheckBox.Add_Unchecked({
+        foreach ($checkBox in $checkBoxes) {
+            $checkBox.IsChecked = $false
+        }
+    })
+    $cancelButton.Add_Click({
+        $dialog.DialogResult = $false
+        $dialog.Close()
+    })
+    $okButton.Add_Click({
+        $dialog.DialogResult = $true
+        $dialog.Close()
+    })
+
+    & $updateCount
+    $result = $dialog.ShowDialog()
+    if ($result -ne $true) {
+        return @()
+    }
+
+    @($checkBoxes | Where-Object { $_.IsChecked -eq $true } | ForEach-Object { $_.Tag })
+}
+
+function Show-Desktop {
+    try {
+        Set-CollapsedPosition
+        $shell = New-Object -ComObject Shell.Application
+        $shell.ToggleDesktop()
+    } catch {
+        Show-Error "无法回到桌面：$($_.Exception.Message)"
+    }
+}
+
 function New-AppCard($File) {
     $name = Get-DisplayName $File.FullName
     $path = $File.FullName
@@ -277,13 +417,16 @@ $Xaml = @"
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="42"/>
                                 <ColumnDefinition Width="42"/>
+                                <ColumnDefinition Width="42"/>
                             </Grid.ColumnDefinitions>
                             <Button x:Name="CollectButton" Grid.Column="0" Content="⬇" ToolTip="收纳桌面快捷方式"
                                     Height="28" Margin="0,0,7,0" FontSize="15" Background="#18B957" Foreground="White"/>
                             <Button x:Name="RefreshButton" Grid.Column="1" Content="↻" ToolTip="刷新"
                                     Width="36" Height="28" Margin="0,0,6,0" FontSize="16" Background="#991F2937" Foreground="#F9FAFB"/>
                             <Button x:Name="RestoreAllButton" Grid.Column="2" Content="↥" ToolTip="全部恢复到桌面"
-                                    Width="36" Height="28" FontSize="16" Background="#991F2937" Foreground="#F9FAFB"/>
+                                    Width="36" Height="28" Margin="0,0,6,0" FontSize="16" Background="#991F2937" Foreground="#F9FAFB"/>
+                            <Button x:Name="ShowDesktopButton" Grid.Column="3" Content="▱" ToolTip="一键回到桌面"
+                                    Width="36" Height="28" FontSize="15" Background="#991F2937" Foreground="#F9FAFB"/>
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -330,6 +473,7 @@ $SearchBox = $Window.FindName("SearchBox")
 $CollectButton = $Window.FindName("CollectButton")
 $RefreshButton = $Window.FindName("RefreshButton")
 $RestoreAllButton = $Window.FindName("RestoreAllButton")
+$ShowDesktopButton = $Window.FindName("ShowDesktopButton")
 $CloseButton = $Window.FindName("CloseButton")
 $ExitButton = $Window.FindName("ExitButton")
 $GridPanel = $Window.FindName("GridPanel")
@@ -429,25 +573,31 @@ function Refresh-Grid {
 }
 
 $CollectButton.Add_Click({
+    $candidates = @(Get-DesktopShortcutCandidates)
+    if ($candidates.Count -eq 0) {
+        Refresh-Grid
+        $StatusLabel.Text = "桌面上没有新的快捷方式"
+        return
+    }
+
+    $selectedItems = @(Show-CollectSelectionDialog $candidates)
+    if ($selectedItems.Count -eq 0) {
+        $StatusLabel.Text = "已取消收纳"
+        return
+    }
+
     $moved = 0
-    foreach ($sourceDir in @((Get-DesktopDir), (Get-PublicDesktopDir))) {
-        if (-not (Test-Path -LiteralPath $sourceDir)) {
+    foreach ($item in $selectedItems) {
+        if (-not (Test-Path -LiteralPath $item.FullName)) {
             continue
         }
 
-        foreach ($item in Get-ChildItem -LiteralPath $sourceDir -File) {
-            if ($item.Name.ToLowerInvariant() -eq "desktop.ini") {
-                continue
-            }
-            if ($ShortcutExtensions -contains $item.Extension.ToLowerInvariant()) {
-                try {
-                    $destination = Get-UniqueDestination $ShortcutsDir $item.Name
-                    Move-Item -LiteralPath $item.FullName -Destination $destination
-                    $moved++
-                } catch {
-                    Show-Error "无法移动：$($item.Name)`n$($_.Exception.Message)"
-                }
-            }
+        try {
+            $destination = Get-UniqueDestination $ShortcutsDir $item.Name
+            Move-Item -LiteralPath $item.FullName -Destination $destination
+            $moved++
+        } catch {
+            Show-Error "无法移动：$($item.Name)`n$($_.Exception.Message)"
         }
     }
 
@@ -460,6 +610,7 @@ $CollectButton.Add_Click({
 })
 
 $RefreshButton.Add_Click({ Refresh-Grid })
+$ShowDesktopButton.Add_Click({ Show-Desktop })
 $SearchBox.Add_TextChanged({
     $script:CurrentPage = 0
     Refresh-Grid
