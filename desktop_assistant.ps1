@@ -56,6 +56,15 @@ function Get-ShortcutFiles {
         Sort-Object @{ Expression = { Get-DisplayName $_.FullName } }
 }
 
+function Get-FilteredShortcutFiles {
+    $query = $SearchBox.Text.Trim().ToLowerInvariant()
+    @(Get-ShortcutFiles | Where-Object { (Get-DisplayName $_.FullName).ToLowerInvariant().Contains($query) })
+}
+
+function Get-PageCount($FilteredCount) {
+    [Math]::Max(1, [Math]::Ceiling($FilteredCount / $script:ItemsPerPage))
+}
+
 function Get-ShortcutTarget($Path) {
     if ([System.IO.Path]::GetExtension($Path).ToLowerInvariant() -ne ".lnk") {
         return $Path
@@ -431,7 +440,7 @@ $Xaml = @"
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Row="2" Margin="10,0,10,0" Background="#66111827" CornerRadius="12"
+                <Border x:Name="ShortcutGridHost" Grid.Row="2" Margin="10,0,10,0" Background="#66111827" CornerRadius="12"
                         BorderBrush="#4D5E6B7E" BorderThickness="1">
                     <WrapPanel x:Name="GridPanel" Margin="6" VerticalAlignment="Top"/>
                 </Border>
@@ -476,6 +485,7 @@ $RestoreAllButton = $Window.FindName("RestoreAllButton")
 $ShowDesktopButton = $Window.FindName("ShowDesktopButton")
 $CloseButton = $Window.FindName("CloseButton")
 $ExitButton = $Window.FindName("ExitButton")
+$ShortcutGridHost = $Window.FindName("ShortcutGridHost")
 $GridPanel = $Window.FindName("GridPanel")
 $StatusLabel = $Window.FindName("StatusLabel")
 $PrevPageButton = $Window.FindName("PrevPageButton")
@@ -505,7 +515,7 @@ function Set-ExpandedPosition {
 }
 
 function Set-PageState($FilteredCount, $TotalCount) {
-    $pageCount = [Math]::Max(1, [Math]::Ceiling($FilteredCount / $script:ItemsPerPage))
+    $pageCount = Get-PageCount $FilteredCount
     if ($script:CurrentPage -ge $pageCount) {
         $script:CurrentPage = $pageCount - 1
     }
@@ -536,8 +546,7 @@ function Set-PageState($FilteredCount, $TotalCount) {
 
 function Refresh-Grid {
     $GridPanel.Children.Clear()
-    $query = $SearchBox.Text.Trim().ToLowerInvariant()
-    $files = @(Get-ShortcutFiles | Where-Object { (Get-DisplayName $_.FullName).ToLowerInvariant().Contains($query) })
+    $files = @(Get-FilteredShortcutFiles)
     $total = @(Get-ShortcutFiles).Count
     Set-PageState $files.Count $total
 
@@ -570,6 +579,20 @@ function Refresh-Grid {
             $GridPanel.Children.Add((New-AppCard $file)) | Out-Null
         }
     }
+}
+
+function Move-Page($Delta) {
+    $files = @(Get-FilteredShortcutFiles)
+    $pageCount = Get-PageCount $files.Count
+    $targetPage = $script:CurrentPage + $Delta
+
+    if ($targetPage -lt 0 -or $targetPage -ge $pageCount) {
+        return $false
+    }
+
+    $script:CurrentPage = $targetPage
+    Refresh-Grid
+    return $true
 }
 
 $CollectButton.Add_Click({
@@ -616,14 +639,25 @@ $SearchBox.Add_TextChanged({
     Refresh-Grid
 })
 $PrevPageButton.Add_Click({
-    if ($script:CurrentPage -gt 0) {
-        $script:CurrentPage--
-        Refresh-Grid
-    }
+    Move-Page -1 | Out-Null
 })
 $NextPageButton.Add_Click({
-    $script:CurrentPage++
-    Refresh-Grid
+    Move-Page 1 | Out-Null
+})
+$ShortcutGridHost.Add_PreviewMouseWheel({
+    param($sender, $eventArgs)
+
+    if ($eventArgs.Delta -lt 0) {
+        $moved = Move-Page 1
+    } elseif ($eventArgs.Delta -gt 0) {
+        $moved = Move-Page -1
+    } else {
+        $moved = $false
+    }
+
+    if ($moved) {
+        $eventArgs.Handled = $true
+    }
 })
 $TriggerIcon.Add_MouseEnter({ Set-ExpandedPosition })
 $Window.Add_Deactivated({
