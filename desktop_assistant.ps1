@@ -491,7 +491,19 @@ $Xaml = @"
 
                 <Border x:Name="ShortcutGridHost" Grid.Row="2" Margin="10,0,10,0" Background="#66111827" CornerRadius="12"
                         BorderBrush="#4D5E6B7E" BorderThickness="1">
-                    <WrapPanel x:Name="GridPanel" Margin="6" VerticalAlignment="Top"/>
+                    <Grid ClipToBounds="True">
+                        <WrapPanel x:Name="GridPanel" Margin="6" VerticalAlignment="Top">
+                            <WrapPanel.RenderTransform>
+                                <TranslateTransform/>
+                            </WrapPanel.RenderTransform>
+                        </WrapPanel>
+                        <WrapPanel x:Name="TransitionGridPanel" Margin="6" VerticalAlignment="Top"
+                                   Opacity="0" IsHitTestVisible="False">
+                            <WrapPanel.RenderTransform>
+                                <TranslateTransform/>
+                            </WrapPanel.RenderTransform>
+                        </WrapPanel>
+                    </Grid>
                 </Border>
 
                 <Grid Grid.Row="3" Margin="12,0">
@@ -531,7 +543,8 @@ $ShowDesktopButton = $Window.FindName("ShowDesktopButton")
 $CloseButton = $Window.FindName("CloseButton")
 $ExitButton = $Window.FindName("ExitButton")
 $ShortcutGridHost = $Window.FindName("ShortcutGridHost")
-$GridPanel = $Window.FindName("GridPanel")
+$script:GridPanel = $Window.FindName("GridPanel")
+$script:TransitionGridPanel = $Window.FindName("TransitionGridPanel")
 $StatusLabel = $Window.FindName("StatusLabel")
 $PrevPageButton = $Window.FindName("PrevPageButton")
 $NextPageButton = $Window.FindName("NextPageButton")
@@ -545,6 +558,11 @@ $script:IsPointerDown = $false
 $script:IsDragging = $false
 $script:DragStartPoint = $null
 $script:DragOffset = $null
+$script:IsPageAnimating = $false
+$script:OutgoingGridPanel = $null
+$script:IncomingGridPanel = $null
+$script:AnimationFilteredCount = 0
+$script:AnimationTotalCount = 0
 
 function Set-CollapsedPosition {
     $workingArea = Get-LogicalWorkingArea (Get-AnchorScreen)
@@ -588,6 +606,19 @@ function Set-ExpandedPosition {
     $Window.Activate() | Out-Null
 }
 
+function Set-PaginationButtonState($Button, $Available) {
+    $Button.IsEnabled = $true
+    $Button.IsHitTestVisible = $Available
+    $Button.Focusable = $Available
+    if ($Available) {
+        $Button.Opacity = 1
+        $Button.Cursor = [System.Windows.Input.Cursors]::Hand
+    } else {
+        $Button.Opacity = 0.28
+        $Button.Cursor = [System.Windows.Input.Cursors]::Arrow
+    }
+}
+
 function Set-PageState($FilteredCount, $TotalCount) {
     $pageCount = Get-PageCount $FilteredCount
     if ($script:CurrentPage -ge $pageCount) {
@@ -597,8 +628,8 @@ function Set-PageState($FilteredCount, $TotalCount) {
         $script:CurrentPage = 0
     }
 
-    $PrevPageButton.IsEnabled = ($script:CurrentPage -gt 0)
-    $NextPageButton.IsEnabled = ($script:CurrentPage -lt ($pageCount - 1))
+    Set-PaginationButtonState $PrevPageButton ($script:CurrentPage -gt 0)
+    Set-PaginationButtonState $NextPageButton ($script:CurrentPage -lt ($pageCount - 1))
     $PageLabel.Text = "$($script:CurrentPage + 1)/$pageCount"
 
     if ($FilteredCount -eq 0 -or $pageCount -le 1) {
@@ -618,13 +649,35 @@ function Set-PageState($FilteredCount, $TotalCount) {
     }
 }
 
-function Refresh-Grid {
-    $GridPanel.Children.Clear()
-    $files = @(Get-FilteredShortcutFiles)
-    $total = @(Get-ShortcutFiles).Count
-    Set-PageState $files.Count $total
+function Stop-GridPanelAnimations($Panel) {
+    $Panel.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null)
+    $Panel.RenderTransform.BeginAnimation(
+        [System.Windows.Media.TranslateTransform]::YProperty,
+        $null
+    )
+}
 
-    if ($files.Count -eq 0) {
+function Reset-PageAnimation {
+    foreach ($panel in @($script:GridPanel, $script:TransitionGridPanel)) {
+        Stop-GridPanelAnimations $panel
+        $panel.RenderTransform.Y = 0
+    }
+
+    $script:GridPanel.Opacity = 1
+    $script:GridPanel.IsHitTestVisible = $true
+    $script:TransitionGridPanel.Opacity = 0
+    $script:TransitionGridPanel.IsHitTestVisible = $false
+    $script:TransitionGridPanel.Children.Clear()
+    $script:IsPageAnimating = $false
+    $script:OutgoingGridPanel = $null
+    $script:IncomingGridPanel = $null
+    $script:AnimationFilteredCount = 0
+    $script:AnimationTotalCount = 0
+}
+
+function Set-GridPanelContent($Panel, $Files) {
+    $Panel.Children.Clear()
+    if ($Files.Count -eq 0) {
         $empty = New-Object System.Windows.Controls.StackPanel
         $empty.Width = 280
         $empty.Height = 150
@@ -646,16 +699,28 @@ function Refresh-Grid {
         $hint.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(203, 213, 225))
         $empty.Children.Add($hint) | Out-Null
 
-        $GridPanel.Children.Add($empty) | Out-Null
+        $Panel.Children.Add($empty) | Out-Null
     } else {
-        $pageFiles = @($files | Select-Object -Skip ($script:CurrentPage * $script:ItemsPerPage) -First $script:ItemsPerPage)
+        $pageFiles = @($Files | Select-Object -Skip ($script:CurrentPage * $script:ItemsPerPage) -First $script:ItemsPerPage)
         foreach ($file in $pageFiles) {
-            $GridPanel.Children.Add((New-AppCard $file)) | Out-Null
+            $Panel.Children.Add((New-AppCard $file)) | Out-Null
         }
     }
 }
 
+function Refresh-Grid {
+    Reset-PageAnimation
+    $files = @(Get-FilteredShortcutFiles)
+    $total = @(Get-ShortcutFiles).Count
+    Set-PageState $files.Count $total
+    Set-GridPanelContent $script:GridPanel $files
+}
+
 function Move-Page($Delta) {
+    if ($script:IsPageAnimating) {
+        return $false
+    }
+
     $files = @(Get-FilteredShortcutFiles)
     $pageCount = Get-PageCount $files.Count
     $targetPage = $script:CurrentPage + $Delta
@@ -665,7 +730,96 @@ function Move-Page($Delta) {
     }
 
     $script:CurrentPage = $targetPage
-    Refresh-Grid
+    $total = @(Get-ShortcutFiles).Count
+    Set-PageState $files.Count $total
+    Set-PaginationButtonState $PrevPageButton $false
+    Set-PaginationButtonState $NextPageButton $false
+
+    $script:IsPageAnimating = $true
+    $script:OutgoingGridPanel = $script:GridPanel
+    $script:IncomingGridPanel = $script:TransitionGridPanel
+    $script:AnimationFilteredCount = $files.Count
+    $script:AnimationTotalCount = $total
+    Set-GridPanelContent $script:IncomingGridPanel $files
+
+    $direction = if ($Delta -gt 0) { 1 } else { -1 }
+    $distance = 72
+    $duration = [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(220))
+    $ease = New-Object System.Windows.Media.Animation.CubicEase
+    $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+
+    $outgoingSlide = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $outgoingSlide.From = 0
+    $outgoingSlide.To = -$direction * $distance
+    $outgoingSlide.Duration = $duration
+    $outgoingSlide.EasingFunction = $ease
+
+    $outgoingOpacity = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $outgoingOpacity.From = 1
+    $outgoingOpacity.To = 0.2
+    $outgoingOpacity.Duration = $duration
+    $outgoingOpacity.EasingFunction = $ease
+
+    $incomingSlide = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $incomingSlide.From = $direction * $distance
+    $incomingSlide.To = 0
+    $incomingSlide.Duration = $duration
+    $incomingSlide.EasingFunction = $ease
+
+    $incomingOpacity = New-Object System.Windows.Media.Animation.DoubleAnimation
+    $incomingOpacity.From = 0.2
+    $incomingOpacity.To = 1
+    $incomingOpacity.Duration = $duration
+    $incomingOpacity.EasingFunction = $ease
+    $incomingOpacity.Add_Completed({
+        if (-not $script:IsPageAnimating) {
+            return
+        }
+
+        $outgoingPanel = $script:OutgoingGridPanel
+        $incomingPanel = $script:IncomingGridPanel
+        Stop-GridPanelAnimations $outgoingPanel
+        Stop-GridPanelAnimations $incomingPanel
+        $outgoingPanel.RenderTransform.Y = 0
+        $incomingPanel.RenderTransform.Y = 0
+        $outgoingPanel.Opacity = 0
+        $outgoingPanel.IsHitTestVisible = $false
+        $outgoingPanel.Children.Clear()
+        $incomingPanel.Opacity = 1
+        $incomingPanel.IsHitTestVisible = $true
+        [System.Windows.Controls.Panel]::SetZIndex($outgoingPanel, 0)
+        [System.Windows.Controls.Panel]::SetZIndex($incomingPanel, 0)
+
+        $script:GridPanel = $incomingPanel
+        $script:TransitionGridPanel = $outgoingPanel
+        $script:IsPageAnimating = $false
+        $script:OutgoingGridPanel = $null
+        $script:IncomingGridPanel = $null
+        Set-PageState $script:AnimationFilteredCount $script:AnimationTotalCount
+        $script:AnimationFilteredCount = 0
+        $script:AnimationTotalCount = 0
+    })
+
+    [System.Windows.Controls.Panel]::SetZIndex($script:OutgoingGridPanel, 0)
+    [System.Windows.Controls.Panel]::SetZIndex($script:IncomingGridPanel, 1)
+    $script:OutgoingGridPanel.IsHitTestVisible = $false
+    $script:IncomingGridPanel.IsHitTestVisible = $false
+    $script:OutgoingGridPanel.RenderTransform.BeginAnimation(
+        [System.Windows.Media.TranslateTransform]::YProperty,
+        $outgoingSlide
+    )
+    $script:OutgoingGridPanel.BeginAnimation(
+        [System.Windows.UIElement]::OpacityProperty,
+        $outgoingOpacity
+    )
+    $script:IncomingGridPanel.RenderTransform.BeginAnimation(
+        [System.Windows.Media.TranslateTransform]::YProperty,
+        $incomingSlide
+    )
+    $script:IncomingGridPanel.BeginAnimation(
+        [System.Windows.UIElement]::OpacityProperty,
+        $incomingOpacity
+    )
     return $true
 }
 
