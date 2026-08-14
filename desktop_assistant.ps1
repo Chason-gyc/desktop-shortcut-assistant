@@ -65,6 +65,20 @@ function Get-PageCount($FilteredCount) {
     [Math]::Max(1, [Math]::Ceiling($FilteredCount / $script:ItemsPerPage))
 }
 
+function Get-ActiveWorkingArea {
+    $pixelArea = [System.Windows.Forms.Screen]::FromPoint(
+        [System.Windows.Forms.Cursor]::Position
+    ).WorkingArea
+    $dpi = [System.Windows.Media.VisualTreeHelper]::GetDpi($Window)
+
+    [pscustomobject]@{
+        Left = $pixelArea.Left / $dpi.DpiScaleX
+        Top = $pixelArea.Top / $dpi.DpiScaleY
+        Right = $pixelArea.Right / $dpi.DpiScaleX
+        Bottom = $pixelArea.Bottom / $dpi.DpiScaleY
+    }
+}
+
 function Get-ShortcutTarget($Path) {
     if ([System.IO.Path]::GetExtension($Path).ToLowerInvariant() -ne ".lnk") {
         return $Path
@@ -120,6 +134,7 @@ function Open-Shortcut($Path) {
     }
 
     try {
+        Set-CollapsedPosition
         Start-Process -FilePath $Path
     } catch {
         Show-Error "无法打开：$(Get-DisplayName $Path)`n$($_.Exception.Message)"
@@ -472,10 +487,6 @@ if (Test-Path -LiteralPath $IconPath) {
     $Window.Icon = New-Object System.Windows.Media.Imaging.BitmapImage($iconUri)
 }
 
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$Window.Left = 10
-$Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
-
 $TriggerIcon = $Window.FindName("TriggerIcon")
 $MainShell = $Window.FindName("MainShell")
 $SearchBox = $Window.FindName("SearchBox")
@@ -495,19 +506,21 @@ $script:CurrentPage = 0
 $script:ItemsPerPage = 12
 
 function Set-CollapsedPosition {
+    $workingArea = Get-ActiveWorkingArea
     $Window.Width = 12
     $Window.Height = 68
-    $Window.Left = 0
-    $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 70)
+    $Window.Left = $workingArea.Left
+    $Window.Top = [Math]::Max($workingArea.Top, $workingArea.Bottom - $Window.Height - 70)
     $MainShell.Visibility = "Collapsed"
     $TriggerIcon.Visibility = "Visible"
 }
 
 function Set-ExpandedPosition {
+    $workingArea = Get-ActiveWorkingArea
     $Window.Width = 340
     $Window.Height = 370
-    $Window.Left = 8
-    $Window.Top = [Math]::Max(0, $screen.Bottom - $Window.Height - 10)
+    $Window.Left = $workingArea.Left + 8
+    $Window.Top = [Math]::Max($workingArea.Top, $workingArea.Bottom - $Window.Height - 10)
     $TriggerIcon.Visibility = "Collapsed"
     $MainShell.Visibility = "Visible"
     Refresh-Grid
@@ -659,10 +672,34 @@ $ShortcutGridHost.Add_PreviewMouseWheel({
         $eventArgs.Handled = $true
     }
 })
-$TriggerIcon.Add_MouseEnter({ Set-ExpandedPosition })
+$script:AutoCollapseTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:AutoCollapseTimer.Interval = [TimeSpan]::FromMilliseconds(350)
+$script:AutoCollapseTimer.Add_Tick({
+    $script:AutoCollapseTimer.Stop()
+    if (
+        $MainShell.Visibility -eq "Visible" -and
+        -not $Window.IsMouseOver -and
+        $Window.OwnedWindows.Count -eq 0
+    ) {
+        Set-CollapsedPosition
+    }
+})
+
+$TriggerIcon.Add_MouseEnter({
+    $script:AutoCollapseTimer.Stop()
+    Set-ExpandedPosition
+})
+$Window.Add_MouseEnter({ $script:AutoCollapseTimer.Stop() })
+$Window.Add_MouseLeave({
+    if ($MainShell.Visibility -eq "Visible") {
+        $script:AutoCollapseTimer.Stop()
+        $script:AutoCollapseTimer.Start()
+    }
+})
 $Window.Add_Deactivated({
     if ($MainShell.Visibility -eq "Visible") {
-        Set-CollapsedPosition
+        $script:AutoCollapseTimer.Stop()
+        $script:AutoCollapseTimer.Start()
     }
 })
 $CloseButton.Add_Click({ Set-CollapsedPosition })
