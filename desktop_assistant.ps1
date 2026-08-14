@@ -65,10 +65,8 @@ function Get-PageCount($FilteredCount) {
     [Math]::Max(1, [Math]::Ceiling($FilteredCount / $script:ItemsPerPage))
 }
 
-function Get-ActiveWorkingArea {
-    $pixelArea = [System.Windows.Forms.Screen]::FromPoint(
-        [System.Windows.Forms.Cursor]::Position
-    ).WorkingArea
+function Get-LogicalWorkingArea($Screen) {
+    $pixelArea = $Screen.WorkingArea
     $dpi = [System.Windows.Media.VisualTreeHelper]::GetDpi($Window)
 
     [pscustomobject]@{
@@ -77,6 +75,41 @@ function Get-ActiveWorkingArea {
         Right = $pixelArea.Right / $dpi.DpiScaleX
         Bottom = $pixelArea.Bottom / $dpi.DpiScaleY
     }
+}
+
+function Get-AnchorScreen {
+    if (-not [string]::IsNullOrWhiteSpace($script:AnchorScreenDeviceName)) {
+        $screen = [System.Windows.Forms.Screen]::AllScreens |
+            Where-Object { $_.DeviceName -eq $script:AnchorScreenDeviceName } |
+            Select-Object -First 1
+        if ($null -ne $screen) {
+            return $screen
+        }
+    }
+
+    $screen = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+    $script:AnchorScreenDeviceName = $screen.DeviceName
+    $screen
+}
+
+function Set-NearestCornerAnchor {
+    $cursor = [System.Windows.Forms.Cursor]::Position
+    $screen = [System.Windows.Forms.Screen]::FromPoint($cursor)
+    $area = $screen.WorkingArea
+
+    $script:AnchorScreenDeviceName = $screen.DeviceName
+    if ($cursor.X -lt ($area.Left + ($area.Width / 2))) {
+        $script:AnchorHorizontal = "Left"
+    } else {
+        $script:AnchorHorizontal = "Right"
+    }
+    if ($cursor.Y -lt ($area.Top + ($area.Height / 2))) {
+        $script:AnchorVertical = "Top"
+    } else {
+        $script:AnchorVertical = "Bottom"
+    }
+
+    Set-CollapsedPosition
 }
 
 function Get-ShortcutTarget($Path) {
@@ -391,7 +424,8 @@ $Xaml = @"
     <Grid>
         <Border x:Name="TriggerIcon" Width="12" Height="68" CornerRadius="0,10,10,0"
                 Background="#9918B957" HorizontalAlignment="Left" VerticalAlignment="Center"
-                BorderBrush="#6622C55E" BorderThickness="0,1,1,1" ToolTip="移入打开桌面软件助手">
+                BorderBrush="#6622C55E" BorderThickness="0,1,1,1"
+                ToolTip="移入打开；按住拖动到屏幕角落">
             <Grid>
                 <TextBlock Text="⋮" Foreground="#E8FFF0" FontSize="18" FontWeight="Bold"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -504,23 +538,50 @@ $NextPageButton = $Window.FindName("NextPageButton")
 $PageLabel = $Window.FindName("PageLabel")
 $script:CurrentPage = 0
 $script:ItemsPerPage = 12
+$script:AnchorScreenDeviceName = $null
+$script:AnchorHorizontal = "Left"
+$script:AnchorVertical = "Bottom"
+$script:IsPointerDown = $false
+$script:IsDragging = $false
+$script:DragStartPoint = $null
+$script:DragOffset = $null
 
 function Set-CollapsedPosition {
-    $workingArea = Get-ActiveWorkingArea
+    $workingArea = Get-LogicalWorkingArea (Get-AnchorScreen)
     $Window.Width = 12
     $Window.Height = 68
-    $Window.Left = $workingArea.Left
-    $Window.Top = [Math]::Max($workingArea.Top, $workingArea.Bottom - $Window.Height - 70)
+    if ($script:AnchorHorizontal -eq "Right") {
+        $Window.Left = $workingArea.Right - $Window.Width
+        $TriggerIcon.CornerRadius = [System.Windows.CornerRadius]::new(10, 0, 0, 10)
+        $TriggerIcon.BorderThickness = [System.Windows.Thickness]::new(1, 1, 0, 1)
+    } else {
+        $Window.Left = $workingArea.Left
+        $TriggerIcon.CornerRadius = [System.Windows.CornerRadius]::new(0, 10, 10, 0)
+        $TriggerIcon.BorderThickness = [System.Windows.Thickness]::new(0, 1, 1, 1)
+    }
+    if ($script:AnchorVertical -eq "Top") {
+        $Window.Top = $workingArea.Top + 12
+    } else {
+        $Window.Top = $workingArea.Bottom - $Window.Height - 12
+    }
     $MainShell.Visibility = "Collapsed"
     $TriggerIcon.Visibility = "Visible"
 }
 
 function Set-ExpandedPosition {
-    $workingArea = Get-ActiveWorkingArea
+    $workingArea = Get-LogicalWorkingArea (Get-AnchorScreen)
     $Window.Width = 340
     $Window.Height = 370
-    $Window.Left = $workingArea.Left + 8
-    $Window.Top = [Math]::Max($workingArea.Top, $workingArea.Bottom - $Window.Height - 10)
+    if ($script:AnchorHorizontal -eq "Right") {
+        $Window.Left = $workingArea.Right - $Window.Width
+    } else {
+        $Window.Left = $workingArea.Left
+    }
+    if ($script:AnchorVertical -eq "Top") {
+        $Window.Top = $workingArea.Top + 10
+    } else {
+        $Window.Top = $workingArea.Bottom - $Window.Height - 10
+    }
     $TriggerIcon.Visibility = "Collapsed"
     $MainShell.Visibility = "Visible"
     Refresh-Grid
@@ -685,13 +746,92 @@ $script:AutoCollapseTimer.Add_Tick({
     }
 })
 
+$script:ExpandTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:ExpandTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+$script:ExpandTimer.Add_Tick({
+    $script:ExpandTimer.Stop()
+    if (
+        $TriggerIcon.Visibility -eq "Visible" -and
+        $TriggerIcon.IsMouseOver -and
+        -not $script:IsPointerDown
+    ) {
+        Set-ExpandedPosition
+    }
+})
+
 $TriggerIcon.Add_MouseEnter({
     $script:AutoCollapseTimer.Stop()
-    Set-ExpandedPosition
+    if (-not $script:IsPointerDown) {
+        $script:ExpandTimer.Stop()
+        $script:ExpandTimer.Start()
+    }
+})
+$TriggerIcon.Add_MouseLeave({
+    if (-not $script:IsPointerDown) {
+        $script:ExpandTimer.Stop()
+    }
+})
+$TriggerIcon.Add_PreviewMouseLeftButtonDown({
+    param($sender, $eventArgs)
+
+    $script:ExpandTimer.Stop()
+    $script:AutoCollapseTimer.Stop()
+    $script:IsPointerDown = $true
+    $script:IsDragging = $false
+    $script:DragStartPoint = [System.Windows.Forms.Cursor]::Position
+    $script:DragOffset = $eventArgs.GetPosition($Window)
+    [System.Windows.Input.Mouse]::Capture($TriggerIcon) | Out-Null
+    $eventArgs.Handled = $true
+})
+$TriggerIcon.Add_PreviewMouseMove({
+    param($sender, $eventArgs)
+
+    if (
+        -not $script:IsPointerDown -or
+        $eventArgs.LeftButton -ne [System.Windows.Input.MouseButtonState]::Pressed
+    ) {
+        return
+    }
+
+    $cursor = [System.Windows.Forms.Cursor]::Position
+    if (-not $script:IsDragging) {
+        $distance = [Math]::Max(
+            [Math]::Abs($cursor.X - $script:DragStartPoint.X),
+            [Math]::Abs($cursor.Y - $script:DragStartPoint.Y)
+        )
+        if ($distance -lt 4) {
+            return
+        }
+        $script:IsDragging = $true
+    }
+
+    $dpi = [System.Windows.Media.VisualTreeHelper]::GetDpi($Window)
+    $Window.Left = ($cursor.X / $dpi.DpiScaleX) - $script:DragOffset.X
+    $Window.Top = ($cursor.Y / $dpi.DpiScaleY) - $script:DragOffset.Y
+    $eventArgs.Handled = $true
+})
+$TriggerIcon.Add_PreviewMouseLeftButtonUp({
+    param($sender, $eventArgs)
+
+    if (-not $script:IsPointerDown) {
+        return
+    }
+
+    $wasDragging = $script:IsDragging
+    $script:IsPointerDown = $false
+    $script:IsDragging = $false
+    $TriggerIcon.ReleaseMouseCapture()
+
+    if ($wasDragging) {
+        Set-NearestCornerAnchor
+    } else {
+        Set-ExpandedPosition
+    }
+    $eventArgs.Handled = $true
 })
 $Window.Add_MouseEnter({ $script:AutoCollapseTimer.Stop() })
 $Window.Add_MouseLeave({
-    if ($MainShell.Visibility -eq "Visible") {
+    if ($MainShell.Visibility -eq "Visible" -and -not $script:IsDragging) {
         $script:AutoCollapseTimer.Stop()
         $script:AutoCollapseTimer.Start()
     }
